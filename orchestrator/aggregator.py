@@ -13,47 +13,49 @@ class Aggregator:
 
     def synthesize(self, query: str, agent_results: dict):
         """
-        Fuses data from multiple agents into a single professional response.
-        Requirement: Support Multi-agent routing and Data Fusion.
+        Fuses data from specialists into a professional response for Property 516810413.
         """
-        # If no data was returned by any agent, handle gracefully
         if not agent_results or all(v is None for v in agent_results.values()):
-            return "I couldn't find enough data from the sources to answer your question."
+            return "I couldn't find enough data from Property 516810413 or the SEO Sheet to answer your question."
 
-        # System prompt for high-quality marketing synthesis
-        system_prompt = """
+        # Persona-driven system prompt for high-quality synthesis
+        system_prompt = f"""
         You are a Senior Marketing Data Scientist. 
-        Your task is to FUSE data from GA4 (Analytics) and Screaming Frog (SEO) into one unified answer.
+        Your goal is to provide a UNIFIED analysis for:
+        - GA4 Property: 516810413
+        - SEO Audit Sheet: 1zzf4ax_H2WiTBVrJigGjF2Q3Yz-qy2qMCbAMKvl6VEE
         
-        RULES:
-        1. If the user asks for a specific format (JSON/Table), follow it strictly.
-        2. Correlate traffic metrics with technical SEO status (e.g., 'High traffic pages with long titles').
-        3. Provide actionable insights based on the combined data.
-        4. If one source provided no data, summarize what is available professionally.
+        DATA FUSION RULES:
+        1. CORRELATION: Match traffic metrics (Analytics) with technical SEO health (Screaming Frog).
+           Example: "The page /pricing has 0 traffic but is also marked as 'Non-Indexable' in the audit."
+        2. STRUCTURE: Use bullet points for key findings and a 'Recommendations' section.
+        3. INSIGHTS: Move beyond 'what happened' to 'why it matters' for this specific site.
+        4. TRANSPARENCY: If data from one source is missing, explain it professionally.
         """
 
         try:
-            # Use a retry loop for stability against 429 errors
+            # Final synthesis with specific temperature for factual accuracy
             response = self._call_gemini_with_backoff(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Query: {query}\n\nAgent Results: {json.dumps(agent_results)}"}
+                    {"role": "user", "content": f"User Query: {query}\n\nSpecialist Findings: {json.dumps(agent_results)}"}
                 ]
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"Aggregator Error: Could not synthesize results. Raw results: {json.dumps(agent_results)}"
+            return f"Data Fusion Error: Could not synthesize findings. Results: {json.dumps(agent_results)}"
 
     def _call_gemini_with_backoff(self, messages):
-        """Exponential backoff for the final synthesis step."""
+        """Exponential backoff to handle proxy rate limits."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 return self.client.chat.completions.create(
                     model=settings.MODEL_NAME,
                     messages=messages,
-                    temperature=0.7 # Slightly lower for more factual synthesis
+                    temperature=0.7 
                 )
             except (RateLimitError, APIError) as e:
                 if attempt == max_retries - 1: raise e
-                time.sleep(2 ** attempt)
+                wait = (2 ** attempt) + 1
+                time.sleep(wait)

@@ -2,6 +2,9 @@
 tools/ga4_tools.py - Schema and validation for GA4 reporting tools.
 """
 
+# Hardcoded Property ID for Property: 516810413
+DEFAULT_PROPERTY_ID = "516810413"
+
 # Allowed values to prevent LLM hallucinations
 VALID_METRICS = [
     "activeUsers", "sessions", "screenPageViews", 
@@ -18,10 +21,15 @@ VALID_DIMENSIONS = [
 # This schema tells Gemini exactly how to format the tool output
 GA4_REPORTING_TOOL_SCHEMA = {
     "name": "run_ga4_report",
-    "description": "Fetch live website analytics data from Google Analytics 4.",
+    "description": "Fetch live website analytics data from Google Analytics 4 for Property 516810413.",
     "parameters": {
         "type": "object",
         "properties": {
+            "property_id": {
+                "type": "string",
+                "default": DEFAULT_PROPERTY_ID,
+                "description": "The GA4 Property ID to query."
+            },
             "metrics": {
                 "type": "array",
                 "items": {"type": "string", "enum": VALID_METRICS},
@@ -44,7 +52,7 @@ GA4_REPORTING_TOOL_SCHEMA = {
             "filters": {
                 "type": "object",
                 "properties": {
-                    "dimension": {"type": "string"},
+                    "dimension": {"type": "string", "enum": VALID_DIMENSIONS},
                     "value": {"type": "string"}
                 },
                 "description": "Optional dimension filter (e.g., filter by specific page path)."
@@ -57,14 +65,21 @@ GA4_REPORTING_TOOL_SCHEMA = {
 def validate_reporting_plan(plan: dict):
     """
     Server-side validation of GA4 fields before calling the API.
-    Required for Tier 1 Production Readiness.
+    Ensures Tier 1 Production Readiness by blocking invalid requests.
     """
+    # Validate Property ID
+    p_id = plan.get("property_id", DEFAULT_PROPERTY_ID)
+    if not p_id.isdigit():
+        raise ValueError(f"Invalid Property ID format: {p_id}")
+
+    # Validate Metrics
     for m in plan.get("metrics", []):
         if m not in VALID_METRICS:
-            raise ValueError(f"Invalid metric: {m}")
+            raise ValueError(f"Invalid or unsupported metric: {m}")
             
+    # Validate Dimensions
     for d in plan.get("dimensions", []):
         if d not in VALID_DIMENSIONS:
-            raise ValueError(f"Invalid dimension: {d}")
+            raise ValueError(f"Invalid or unsupported dimension: {d}")
             
     return True

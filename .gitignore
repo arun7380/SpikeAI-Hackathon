@@ -1,3 +1,10 @@
+# secrets
 credentials.json
 .env
-credentials.json
+
+# virtual env
+.venv/
+
+# python cache
+__pycache__/
+*.pyc
