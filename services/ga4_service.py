@@ -5,76 +5,88 @@ from google.analytics.data_v1beta.types import (
     Dimension,
     Metric,
     RunReportRequest,
-    OrderBy
+    OrderBy,
+    FilterExpression,
+    Filter
 )
 from core.config import settings
 
 class GA4Service:
     def __init__(self):
         """
-        Initializes the client using the credentials.json file at project root.
-        Requirement: Must work without code changes after replacement.
+        Initializes the GA4 Client.
+        Requirement: Load credentials from credentials.json at runtime.
         """
-        # Load credentials directly from the path defined in settings
-        self.client = BetaAnalyticsDataClient.from_service_account_json(
-            str(settings.CREDENTIALS_JSON_PATH)
-        )
+        # Set the environment variable so the Google library finds the file
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GA4_CREDENTIALS_PATH
+        self.client = BetaAnalyticsDataClient()
 
-    def query(self, property_id: str, metrics: list, dimensions: list, date_ranges: list):
+    def run_analytics_report(self, property_id: str, plan: dict):
         """
-        Executes a runReport request against the specified GA4 property.
-        """
-        # Construct the metrics list using GA4 types
-        ga4_metrics = [Metric(name=m) for m in metrics]
+        Executes a report request against the GA4 Data API.
         
-        # Construct the dimensions list
-        ga4_dimensions = [Dimension(name=d) for d in dimensions]
-        
-        # Construct date ranges (expects strings like '2023-01-01' or '30daysAgo')
-        ga4_date_ranges = [
-            DateRange(start_date=date_ranges[0], end_date=date_ranges[1])
-        ]
-
-        # Build the request object
-        request = RunReportRequest(
-            property=f"properties/{property_id}",
-            dimensions=ga4_dimensions,
-            metrics=ga4_metrics,
-            date_ranges=ga4_date_ranges,
-        )
-
+        :param property_id: Provided in the API request body.
+        :param plan: Dict containing metrics, dimensions, and date_ranges.
+        """
         try:
-            # Execute live data pull
+            # Construct metrics and dimensions objects
+            metrics = [Metric(name=m) for m in plan.get("metrics", [])]
+            dimensions = [Dimension(name=d) for d in plan.get("dimensions", [])]
+            
+            # Construct date ranges (expects list of tuples/lists: [['start', 'end']])
+            date_ranges = [
+                DateRange(start_date=dr[0], end_date=dr[1]) 
+                for dr in plan.get("date_ranges", [])
+            ]
+
+            # Build the request
+            request = RunReportRequest(
+                property=f"properties/{property_id}",
+                dimensions=dimensions,
+                metrics=metrics,
+                date_ranges=date_ranges,
+            )
+
+            # Optional: Add dimension filters if the LLM provided them
+            if plan.get("filters"):
+                # Simplified example: matching a specific page path
+                f = plan["filters"]
+                request.dimension_filter = FilterExpression(
+                    filter=Filter(
+                        field_name=f["dimension"],
+                        string_filter=Filter.StringFilter(value=f["value"])
+                    )
+                )
+
+            # Execute the request
             response = self.client.run_report(request)
             return self._parse_response(response)
+
         except Exception as e:
-            # Requirements: Handle errors gracefully and return structured info
-            return {"error": str(e), "data": []}
+            # Requirement: Handle empty/sparse datasets and errors gracefully.
+            return {"error": str(e), "status": "failed"}
 
     def _parse_response(self, response):
         """
-        Converts the raw API response into a simplified dictionary format.
+        Converts the complex GA4 response object into a simple list of dicts.
         """
         results = []
-        
-        # Extract dimension names and metric names for headers
-        dim_headers = [header.name for header in response.dimension_headers]
-        metric_headers = [header.name for header in response.metric_headers]
-
-        # Iterate through rows and build a clean data list
         for row in response.rows:
             row_data = {}
-            for i, val in enumerate(row.dimension_values):
-                row_data[dim_headers[i]] = val.value
-            for i, val in enumerate(row.metric_values):
-                row_data[metric_headers[i]] = val.value
+            # Extract dimension values
+            for i, dimension_value in enumerate(row.dimension_values):
+                dimension_name = response.dimension_headers[i].name
+                row_data[dimension_name] = dimension_value.value
+            
+            # Extract metric values
+            for i, metric_value in enumerate(row.metric_values):
+                metric_name = response.metric_headers[i].name
+                row_data[metric_name] = metric_value.value
+            
             results.append(row_data)
-
+        
         return {
-            "row_count": response.row_count,
             "data": results,
-            "metadata": {
-                "currency_code": response.metadata.currency_code,
-                "time_zone": response.metadata.time_zone
-            }
+            "row_count": response.row_count,
+            "metadata": "No data found for this period" if not results else "Success"
         }

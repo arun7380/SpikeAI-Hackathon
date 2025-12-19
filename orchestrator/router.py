@@ -2,67 +2,57 @@ import json
 from openai import OpenAI
 from core.config import settings
 from core.prompts import ORCHESTRATOR_ROUTER_PROMPT
-from orchestrator.planner import Planner
-from orchestrator.aggregator import Aggregator
 from agents.analytics_agent import AnalyticsAgent
 from agents.seo_agent import SEOAgent
+from orchestrator.planner import Planner
+from orchestrator.aggregator import Aggregator
 
 class Orchestrator:
     def __init__(self):
-        # Unified API format via LiteLLM proxy [cite: 242, 245]
+        # LiteLLM Proxy Client
         self.client = OpenAI(
             api_key=settings.LITELLM_API_KEY,
             base_url=settings.LITELLM_BASE_URL
         )
-        self.planner = Planner()
-        self.aggregator = Aggregator()
+        
+        # Initialize Specialist Agents
         self.analytics_agent = AnalyticsAgent()
         self.seo_agent = SEOAgent()
+        
+        # Initialize Orchestration Components
+        self.planner = Planner()
+        self.aggregator = Aggregator()
 
-    async def route_query(self, query: str, property_id: str = None):
+    def route_and_execute(self, query: str, property_id: str = None, spreadsheet_id: str = None):
         """
-        Main orchestration logic: Detect intent -> Create Plan -> Execute -> Aggregate.
+        Main entry point for the backend. Handles routing, execution, and fusion.
         """
-        # 1. Intent Detection [cite: 29, 97]
-        intent_data = await self._get_intent(query)
-        intent = intent_data.get("intent")
-
-        # 2. Routing logic [cite: 30, 98]
-        if intent == "analytics":
-            if not property_id:
-                raise ValueError("propertyId is required for GA4 analytics queries.") # [cite: 107]
+        try:
+            # 1. Intent Detection: Determine which domains are involved
+            intent_data = self._get_intent(query)
+            intent = intent_data.get("intent", "analytics")
             
-            # Tier 1 flow: Analytics Agent
-            plan = await self.planner.create_plan(query, "analytics")
-            data = await self.analytics_agent.run(plan, property_id)
-            return await self.aggregator.aggregate(query, analytics_data=data)
-
-        elif intent == "seo":
-            # Tier 2 flow: SEO Agent
-            plan = await self.planner.create_plan(query, "seo")
-            data = await self.seo_agent.run(plan)
-            return await self.aggregator.aggregate(query, seo_data=data)
-
-        elif intent == "fusion":
-            # Tier 3 flow: Multi-Agent Data Fusion [cite: 99, 135]
-            fusion_plan = await self.planner.create_plan(query, "fusion")
+            # 2. Tier 3: Multi-Agent Planning & Execution
+            if intent == "both":
+                return self._handle_multi_agent_fusion(query, property_id, spreadsheet_id)
             
-            # Parallel or sequential execution
-            ga4_results = await self.analytics_agent.run(fusion_plan["analytics_step"], property_id)
-            seo_results = await self.seo_agent.run(fusion_plan["seo_step"])
+            # 3. Tier 1 & 2: Single Agent Routing
+            if intent == "analytics":
+                if not property_id:
+                    return "Error: propertyId is required for GA4 queries."
+                return self.analytics_agent.answer_question(query, property_id)
             
-            # Unified response aggregation 
-            return await self.aggregator.aggregate(query, analytics_data=ga4_results, seo_data=seo_results)
+            if intent == "seo":
+                return self.seo_agent.answer_question(query, spreadsheet_id)
 
-        else:
-            return "I'm sorry, I couldn't determine the intent of your request. Please try again."
+        except Exception as e:
+            print(f"Orchestration Error: {str(e)}")
+            return f"I encountered an error while processing your request: {str(e)}"
 
-    async def _get_intent(self, query: str):
-        """
-        Uses LiteLLM to classify the query into Analytics, SEO, or Fusion.
-        """
+    def _get_intent(self, query: str):
+        """Uses Gemini to detect if the query is GA4, SEO, or Both."""
         response = self.client.chat.completions.create(
-            model=settings.MODEL_NAME, # Defaults to gemini-1.5-flash [cite: 256]
+            model=settings.MODEL_NAME,
             messages=[
                 {"role": "system", "content": ORCHESTRATOR_ROUTER_PROMPT},
                 {"role": "user", "content": query}
@@ -70,3 +60,27 @@ class Orchestrator:
             response_format={"type": "json_object"}
         )
         return json.loads(response.choices[0].message.content)
+
+    def _handle_multi_agent_fusion(self, query: str, property_id: str, spreadsheet_id: str):
+        """
+        Tier 3 Logic: Plan tasks, execute sequentially, and aggregate.
+        """
+        # Create an execution plan (Task Decomposition)
+        plan = self.planner.create_execution_plan(query)
+        agent_results = {}
+
+        for task in plan.get("tasks", []):
+            agent_type = task.get("agent")
+            
+            if agent_type == "Analytics_Agent":
+                agent_results["analytics"] = self.analytics_agent.answer_question(
+                    task.get("description"), property_id
+                )
+            elif agent_type == "SEO_Agent":
+                # Pass previous results if 'requires_context' is true
+                agent_results["seo"] = self.seo_agent.answer_question(
+                    task.get("description"), spreadsheet_id
+                )
+
+        # Final Response Aggregation (Data Fusion)
+        return self.aggregator.synthesize(query, agent_results)

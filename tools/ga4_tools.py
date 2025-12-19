@@ -1,47 +1,70 @@
-from services.ga4_service import GA4Service
-import logging
+"""
+tools/ga4_tools.py - Schema and validation for GA4 reporting tools.
+"""
 
-logger = logging.getLogger(__name__)
-ga4_service = GA4Service()
+# Allowed values to prevent LLM hallucinations
+VALID_METRICS = [
+    "activeUsers", "sessions", "screenPageViews", 
+    "engagementRate", "averageEngagementTime", "eventCount",
+    "conversions", "totalRevenue", "bounceRate"
+]
 
-def get_traffic_overview(property_id: str, date_range: list):
-    """
-    Fetches a high-level overview of traffic including users and sessions.
-    Args:
-        property_id: The GA4 Property ID.
-        date_range: A list [start_date, end_date], e.g., ["30daysAgo", "yesterday"].
-    """
-    metrics = ["activeUsers", "sessions", "screenPageViews"]
-    dimensions = ["date"] # Group by date for a time-series overview
-    
-    logger.info(f"Tool: Fetching traffic overview for {property_id}")
-    return ga4_service.query(property_id, metrics, dimensions, date_range)
+VALID_DIMENSIONS = [
+    "pagePath", "pageTitle", "date", "sessionSource", 
+    "sessionMedium", "country", "city", "deviceCategory",
+    "landingPage", "channelGroup"
+]
 
-def get_page_performance(property_id: str, date_range: list, limit: int = 10):
-    """
-    Fetches the top performing pages by views.
-    Args:
-        property_id: The GA4 Property ID.
-        date_range: A list [start_date, end_date].
-        limit: Number of pages to return.
-    """
-    metrics = ["screenPageViews", "sessions"]
-    dimensions = ["pagePath"]
-    
-    logger.info(f"Tool: Fetching top {limit} pages for {property_id}")
-    result = ga4_service.query(property_id, metrics, dimensions, date_range)
-    
-    # Simple top-N slice if the API returns more
-    if "data" in result:
-        result["data"] = result["data"][:limit]
-    return result
+# This schema tells Gemini exactly how to format the tool output
+GA4_REPORTING_TOOL_SCHEMA = {
+    "name": "run_ga4_report",
+    "description": "Fetch live website analytics data from Google Analytics 4.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "metrics": {
+                "type": "array",
+                "items": {"type": "string", "enum": VALID_METRICS},
+                "description": "The quantitative measurements to fetch (e.g., sessions)."
+            },
+            "dimensions": {
+                "type": "array",
+                "items": {"type": "string", "enum": VALID_DIMENSIONS},
+                "description": "The attributes to group data by (e.g., pagePath)."
+            },
+            "date_ranges": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 2, "maxItems": 2
+                },
+                "description": "List of [start_date, end_date] in YYYY-MM-DD format."
+            },
+            "filters": {
+                "type": "object",
+                "properties": {
+                    "dimension": {"type": "string"},
+                    "value": {"type": "string"}
+                },
+                "description": "Optional dimension filter (e.g., filter by specific page path)."
+            }
+        },
+        "required": ["metrics", "dimensions", "date_ranges"]
+    }
+}
 
-def get_user_demographics(property_id: str, date_range: list):
+def validate_reporting_plan(plan: dict):
     """
-    Analyzes user traffic by device category and country.
+    Server-side validation of GA4 fields before calling the API.
+    Required for Tier 1 Production Readiness.
     """
-    metrics = ["activeUsers"]
-    dimensions = ["deviceCategory", "country"]
-    
-    logger.info(f"Tool: Fetching demographics for {property_id}")
-    return ga4_service.query(property_id, metrics, dimensions, date_range)
+    for m in plan.get("metrics", []):
+        if m not in VALID_METRICS:
+            raise ValueError(f"Invalid metric: {m}")
+            
+    for d in plan.get("dimensions", []):
+        if d not in VALID_DIMENSIONS:
+            raise ValueError(f"Invalid dimension: {d}")
+            
+    return True

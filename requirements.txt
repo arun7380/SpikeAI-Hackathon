@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+openai
+pydantic
+pydantic-settings
+python-dotenv
+google-analytics-data
+google-api-python-client
+google-auth
+pandas
